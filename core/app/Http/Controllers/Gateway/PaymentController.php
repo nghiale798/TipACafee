@@ -17,80 +17,8 @@ use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Http;
 
 class PaymentController extends Controller {
-    public function payos(Request $request)
-{
-    $amount = $request->input('amount');
-    $description = "Ủng hộ " . $request->input('donor_identity') . " - " . $request->input('message');
-    $returnUrl = route('payment.success'); // URL sau khi thanh toán thành công
-    $cancelUrl = route('payment.cancel'); // URL nếu hủy thanh toán
-
-    // Gọi API PayOS để khởi tạo thanh toán
-    $response = $this->createPayOSPayment($amount, $description, $returnUrl, $cancelUrl);
-
-    if ($response && isset($response['checkoutUrl'])) {
-        return response()->json(['pay_url' => $response['checkoutUrl']]);
-    } else {
-        return response()->json(['error' => 'Không thể khởi tạo thanh toán'], 500);
-    }
-}
-    public function createPayment(Request $request)
-    {
-        $amount = $request->input('amount'); // Số tiền thanh toán (đơn vị: VND)
-        $description = $request->input('description'); // Mô tả thanh toán
-        $returnUrl = $request->input('returnUrl'); // URL sau khi thanh toán thành công
-        $cancelUrl = $request->input('cancelUrl'); // URL nếu hủy thanh toán
-
-        $data = [
-            'amount' => $amount,
-            'description' => $description,
-            'returnUrl' => $returnUrl,
-            'cancelUrl' => $cancelUrl,
-        ];
-
-        $ch = curl_init(config('payos.checkout_url'));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'x-client-id: ' . config('payos.client_id'),
-            'x-client-secret: ' . config('payos.client_secret'),
-            'Content-Type: application/json',
-        ]);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode === 200) {
-            $responseData = json_decode($response, true);
-            return response()->json(['checkoutUrl' => $responseData['checkoutUrl']]);
-        } else {
-            return response()->json(['error' => 'Không thể khởi tạo thanh toán'], 500);
-        }
-    }
-
-    public function handleWebhook(Request $request)
-    {
-        $paymentId = $request->input('paymentId');
-        $status = $request->input('status');
-        $amount = $request->input('amount');
-        $description = $request->input('description');
-
-        // Lưu thông tin giao dịch vào cơ sở dữ liệu
-        \DB::table('transactions')->insert([
-            'paymentId' => $paymentId,
-            'status' => $status,
-            'amount' => $amount,
-            'description' => $description,
-            'created_at' => now(),
-        ]);
-
-        return response()->json(['success' => true]);
-    }
-    
     public function payment(Request $request) {
         $request->validate([
             "quantity"            => "nullable|numeric|gt:0",
@@ -185,18 +113,15 @@ class PaymentController extends Controller {
         session()->forget('THANKS_LINK');
         session()->forget('THANKS_GOAL_LINK');
 
-        return redirect()->route('home')->with('message', 'Thanh toán thành công!');
+        return to_route('payment.capture');
+
     }
 
     public function capture() {
         if (!session()->has('DONATION_DATA')) {
-            abort(500, 'Lỗi session DONATION_DATA không tồn tại');
+            return to_route('home');
         }
         $donationData = (object) session('DONATION_DATA');
-        session(['DONATION_DATA' => [
-    'taker_user_id' => $takerUserId,
-    'amount' => $amount
-]]);
 
         $takerUserId = $donationData->taker_user_id;
         $amount      = $donationData->amount;
@@ -213,7 +138,7 @@ class PaymentController extends Controller {
         } else {
             $layout = "frontend";
         }
-        return to_route('payment.payos');    
+        return view($this->activeTemplate . 'user.payment.deposit', compact('gatewayCurrency', 'pageTitle', 'user', 'amount', 'layout'));
     }
 
     public function deposit(Request $request) {
